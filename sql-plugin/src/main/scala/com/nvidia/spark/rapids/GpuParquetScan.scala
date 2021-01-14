@@ -1141,9 +1141,6 @@ class MultiFileParquetPartitionReader(
       if (dataSize == 0) {
         None
       } else {
-        if (debugDumpPrefix != null) {
-          dumpParquetData(dataBuffer, dataSize, splits)
-        }
         val parseOpts = ParquetOptions.builder()
           .withTimeUnit(DType.TIMESTAMP_MICROSECONDS)
           .enableStrictDecimalType(true)
@@ -1152,9 +1149,18 @@ class MultiFileParquetPartitionReader(
         // about to start using the GPU
         GpuSemaphore.acquireIfNecessary(TaskContext.get())
 
-        val table = withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
-          metrics(GPU_DECODE_TIME))) { _ =>
-          Table.readParquet(parseOpts, dataBuffer, 0, dataSize)
+        val table = try {
+          withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
+            metrics(GPU_DECODE_TIME))) { _ =>
+            Table.readParquet(parseOpts, dataBuffer, 0, dataSize)
+          }
+        } catch {
+          case e => {
+            if (debugDumpPrefix != null) {
+              dumpParquetData(dataBuffer, dataSize, splits)
+            }
+            throw e
+          }
         }
         closeOnExcept(table) { _ =>
           if (!isCorrectRebaseMode) {
@@ -1550,9 +1556,7 @@ class MultiFileCloudParquetPartitionReader(
       return addPartitionValues(Some(emptyBatch), partValues, partitionSchema)
     }
     val table = withResource(hostBuffer) { _ =>
-      if (debugDumpPrefix != null) {
-        dumpParquetData(hostBuffer, dataSize, files)
-      }
+
       val parseOpts = ParquetOptions.builder()
         .withTimeUnit(DType.TIMESTAMP_MICROSECONDS)
         .enableStrictDecimalType(true)
@@ -1561,10 +1565,18 @@ class MultiFileCloudParquetPartitionReader(
       // about to start using the GPU
       GpuSemaphore.acquireIfNecessary(TaskContext.get())
 
-      val table = withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
-        metrics(GPU_DECODE_TIME))) { _ =>
-        Table.readParquet(parseOpts, hostBuffer, 0, dataSize)
-      }
+      val table = try {
+        withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
+          metrics(GPU_DECODE_TIME))) { _ =>
+            Table.readParquet(parseOpts, hostBuffer, 0, dataSize)
+          }
+        } catch {
+          case e =>
+            if (debugDumpPrefix != null) {
+              dumpParquetData(hostBuffer, dataSize, files)
+            }
+            throw e
+       }
       closeOnExcept(table) { _ =>
         if (!isCorrectRebaseMode) {
           (0 until table.getNumberOfColumns).foreach { i =>
@@ -1686,9 +1698,6 @@ class ParquetPartitionReader(
       if (dataSize == 0) {
         None
       } else {
-        if (debugDumpPrefix != null) {
-          dumpParquetData(dataBuffer, dataSize, Array(split))
-        }
         val parseOpts = ParquetOptions.builder()
           .withTimeUnit(DType.TIMESTAMP_MICROSECONDS)
           .enableStrictDecimalType(true)
@@ -1697,9 +1706,18 @@ class ParquetPartitionReader(
         // about to start using the GPU
         GpuSemaphore.acquireIfNecessary(TaskContext.get())
 
-        val table = withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
+        val table = try {
+          withResource(new NvtxWithMetrics("Parquet decode", NvtxColor.DARK_GREEN,
             metrics(GPU_DECODE_TIME))) { _ =>
-          Table.readParquet(parseOpts, dataBuffer, 0, dataSize)
+            Table.readParquet(parseOpts, dataBuffer, 0, dataSize)
+          }
+        } catch {
+          case e => {
+            if (debugDumpPrefix != null) {
+              dumpParquetData(dataBuffer, dataSize, Array(split))
+            }
+            throw e
+          }
         }
         closeOnExcept(table) { _ =>
           if (!isCorrectedRebaseMode) {
