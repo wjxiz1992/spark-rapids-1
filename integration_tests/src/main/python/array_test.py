@@ -117,3 +117,12 @@ def test_array_element_at(data_gen):
                                element_at(col('a'), -1)),
                                conf={'spark.sql.ansi.enabled':False,
                                      'spark.sql.legacy.allowNegativeScaleOfDecimal': True})
+
+@pytest.mark.parametrize('data_gen', [ArrayGen(short_gen, max_length=10)], ids=idfn)
+def test_array_element_at_ansi(data_gen):
+    if not is_before_spark_311():
+        pytest.xfail("Should fail with out of bound index exception.")
+    assert_gpu_and_cpu_are_equal_collect(lambda spark: unary_op_df(
+        spark, data_gen).select(element_at(col('a'), 11)),
+                               conf={'spark.sql.ansi.enabled':True,
+                                     'spark.sql.legacy.allowNegativeScaleOfDecimal': True})

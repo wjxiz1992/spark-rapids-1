@@ -17,13 +17,11 @@
 package com.nvidia.spark.rapids.shims.spark311
 
 import java.nio.ByteBuffer
-
 import com.nvidia.spark.rapids._
 import com.nvidia.spark.rapids.shims.spark301.Spark301Shims
 import com.nvidia.spark.rapids.spark311.RapidsShuffleManager
 import org.apache.arrow.memory.ReferenceManager
 import org.apache.arrow.vector.ValueVector
-
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.Resolver
@@ -40,7 +38,7 @@ import org.apache.spark.sql.execution.datasources.v2.parquet.ParquetScan
 import org.apache.spark.sql.execution.exchange.{ENSURE_REQUIREMENTS, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, BroadcastNestedLoopJoinExec, HashJoin, ShuffledHashJoinExec, SortMergeJoinExec}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
-import org.apache.spark.sql.rapids.{GpuFileSourceScanExec, GpuStringReplace, ShuffleManagerShimBase}
+import org.apache.spark.sql.rapids.{GpuElementAt, GpuFileSourceScanExec, GpuStringReplace, ShuffleManagerShimBase}
 import org.apache.spark.sql.rapids.execution.{GpuBroadcastNestedLoopJoinExecBase, GpuShuffleExchangeExecBase}
 import org.apache.spark.sql.rapids.shims.spark311._
 import org.apache.spark.sql.types._
@@ -226,7 +224,38 @@ class Spark311Shims extends Spark301Shims {
         override def convertToGpu(): GpuExpression = {
           GpuLag(input.convertToGpu(), offset.convertToGpu(), default.convertToGpu())
         }
-      })
+      }),
+    GpuOverrides.expr[ElementAt](
+      "Returns element of array at given(1-based) index in value if column is array. " +
+        "Returns value for the given key in value if column is map.",
+      ExprChecks.binaryProjectNotLambda(
+        (TypeSig.commonCudfTypes + TypeSig.ARRAY + TypeSig.STRUCT + TypeSig.NULL +
+          TypeSig.DECIMAL + TypeSig.MAP).nested(), TypeSig.all,
+        ("array/map", TypeSig.ARRAY.nested(TypeSig.commonCudfTypes + TypeSig.ARRAY +
+          TypeSig.STRUCT + TypeSig.NULL + TypeSig.DECIMAL + TypeSig.MAP) +
+          TypeSig.MAP.nested(TypeSig.STRING)
+            .withPsNote(TypeEnum.MAP ,"If it's map, only string is supported. " +
+              "Extra check is inside the expression metadata."), TypeSig.all),
+        ("index/key", TypeSig.lit(TypeEnum.INT) + TypeSig.lit(TypeEnum.STRING), TypeSig.all)),
+      (in, conf, p, r) => new BinaryExprMeta[ElementAt](in, conf, p, r) {
+        override def tagExprForGpu() = {
+          // To distinguish the supported nested type between Array and Map
+          in.left.dataType match {
+            case MapType(_,valueType,_) => {
+              valueType match {
+                case StringType => // minimum support
+                case _ => willNotWorkOnGpu(s"${valueType.simpleString} is not supported for" +
+                  s" Map value")
+              }
+            }
+            case ArrayType(_,_) => // Array supports more
+          }
+        }
+        override def convertToGpu(lhs: Expression, rhs: Expression): GpuExpression = {
+          GpuElementAt(lhs, rhs, SQLConf.get.ansiEnabled)
+        }
+      }
+    )
  ).map(r => (r.getClassFor.asSubclass(classOf[Expression]), r)).toMap
 
   override def getExprs: Map[Class[_ <: Expression], ExprRule[_ <: Expression]] = {

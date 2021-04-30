@@ -187,7 +187,7 @@ case class GpuGetMapValue(child: Expression, key: Expression)
 }
 
 
-case class GpuElementAt(left: Expression, right: Expression)
+case class GpuElementAt(left: Expression, right: Expression, failOnError: Boolean = false)
   extends GpuBinaryExpression with ExpectsInputTypes {
 
   override lazy val dataType: DataType = left.dataType match {
@@ -240,13 +240,24 @@ case class GpuElementAt(left: Expression, right: Expression)
     lhs.dataType match {
       case _: ArrayType => {
         if (rhs.isValid) {
-          if (rhs.getInt > 0) {
-            // SQL 1-based index
-            lhs.getBase.extractListElement(rhs.getInt - 1)
-          } else if (rhs.getInt == 0) {
-            throw new ArrayIndexOutOfBoundsException("SQL array indices start at 1")
+          val minNumElements = lhs.getBase.countElements.min.getInt
+          if (minNumElements < math.abs(rhs.getInt)) {
+            if (failOnError) {
+              throw new ArrayIndexOutOfBoundsException(
+                s"Invalid index: $rhs.getInt, minumum numElements in this ColumnVector: " +
+                  s"${minNumElements}")
+            } else {
+              lhs.getBase.extractListElement(rhs.getInt)
+            }
           } else {
-            lhs.getBase.extractListElement(rhs.getInt)
+            val idx = if (rhs.getInt == 0) {
+              throw new ArrayIndexOutOfBoundsException("SQL array indices start at 1")
+            } else if (rhs.getInt > 0) {
+              rhs.getInt - 1
+            } else {
+              rhs.getInt
+            }
+            lhs.getBase.extractListElement(idx)
           }
         } else {
           withResource(Scalar.fromNull(
