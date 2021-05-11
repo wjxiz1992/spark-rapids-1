@@ -166,8 +166,19 @@ case class GpuGetMapValue(child: Expression, key: Expression)
 
   override def prettyName: String = "getMapValue"
 
-  override def doColumnar(lhs: GpuColumnVector, rhs: Scalar): ColumnVector =
-    lhs.getBase.getMapValue(rhs)
+  override def doColumnar(lhs: GpuColumnVector, rhs: Scalar): ColumnVector = {
+
+    withResource(lhs.getBase.getMapKeyExistence(rhs)) { intCV =>
+      withResource(intCV.all) { result =>
+        if (result.getBoolean != true) {
+          throw new NoSuchElementException(s"Key: ${rhs.getJavaString} does not exist in one of " +
+            s"the rows in the map column")
+        } else {
+          lhs.getBase.getMapValue(rhs)
+        }
+      }
+    }
+  }
 
   override def doColumnar(numRows: Int, lhs: Scalar, rhs: Scalar): ColumnVector = {
     withResource(GpuColumnVector.from(lhs, numRows, left.dataType)) { expandedLhs =>
